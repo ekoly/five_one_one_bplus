@@ -20,7 +20,7 @@ setuptools.setup(
         "five_one_one_bplus",
     ],
     package_dir={
-        "five_one_one_bplus": "source",
+        "five_one_one_bplus": "python",
     },
     ext_modules=[
         setuptools.Extension(
