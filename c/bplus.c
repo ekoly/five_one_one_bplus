@@ -5,7 +5,11 @@
 
 #define DEBUG 1
 
-static PyObject *_builtins = NULL;
+static PyObject
+    *_builtins = NULL,
+    *_iter = NULL,
+    *_next = NULL,
+    *_hash = NULL;
 
 typedef long long int l64;
 
@@ -23,10 +27,23 @@ typedef struct BPlusNode {
     struct BPlusNode *next;
 } BPlusNode;
 
-void setBuiltins() {
+// sets builtin functions.
+// returns 1 on success, 0 otherwise.
+int setBuiltins() {
+    
     if (_builtins == NULL) {
         _builtins = PyEval_GetBuiltins();
+        _iter = PyDict_GetItemString(_builtins, "iter");
+        _next = PyDict_GetItemString(_builtins, "next");
+        _hash = PyDict_GetItemString(_builtins, "hash");
     }
+
+    if (_builtins != NULL && _iter != NULL && _next != NULL && _hash != NULL) {
+        return 1;
+    }
+
+    return 0;
+
 }
 
 int bisect_left(Array32 *a, l64 x) {
@@ -252,7 +269,8 @@ void BPlusBranch_split(BPlusTree *self, BPlusNode *branch) {
 
     BPlusNode *left, *right;
     // children size, children mid, indices size, indices mid
-    int csize, cmid, isize, imid, ix, new_parent_ix;
+    int csize, cmid, isize, imid, ix;
+    l64 new_parent_ix;
 
     // initialize our 2 new leaves
     left = BPlusBranch_init(self->b);
@@ -332,7 +350,8 @@ void BPlusLeaf_split(BPlusTree *self, BPlusNode *leaf) {
 
     BPlusNode *left, *right;
     // values size, values mid, indices size, indices mid
-    int vsize, vmid, isize, imid, ix, new_parent_ix;
+    int vsize, vmid, isize, imid, ix;
+    l64 new_parent_ix;
 
     // initialize our 2 new leaves
     left = BPlusLeaf_init(self->b);
@@ -408,13 +427,25 @@ static PyObject *BPlusTree_tp_new(PyTypeObject *subtype, PyObject *args, PyObjec
     return (PyObject *)self;
 }
 
+static void BPlusTree_tp_clear(BPlusTree *self) {
+    // TODO
+    return;
+}
+
+static void BPlusTree_tp_dealloc(BPlusTree *self) {
+    BPlusTree_tp_clear(self);
+    BPlusNode_dealloc(self->root);
+    Py_TYPE(self)->tp_free((PyObject *)self);
+}
+
 static int BPlusTree_tp_init(BPlusTree *self, PyObject *args, PyObject *kwargs) {
 
     int b;
-    static char *kwlist[] = {"b", NULL};
+    PyObject *initializer;
+    static char *kwlist[] = {"initializer", "b", NULL};
     BPlusNode *firstleaf;
 
-    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "i", kwlist, &b)) {
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "Oi", kwlist, &initializer, &b)) {
         return -1;
     }
 
@@ -433,21 +464,63 @@ static int BPlusTree_tp_init(BPlusTree *self, PyObject *args, PyObject *kwargs) 
 
     self->b = b;
 
+    if (initializer == Py_None) {
+
+        Py_DECREF(initializer);
+
+        return 0;
+
+    }
+
+    if (setBuiltins() == 0) {
+        
+        BPlusTree_tp_dealloc(self);
+
+        Py_INCREF(PyExc_RuntimeError);
+        PyErr_SetString(PyExc_RuntimeError, "Got error setting builtins.");
+
+        return -1;
+
+    }
+
+    PyObject *iterable = PyObject_CallFunctionObjArgs(_iter, initializer, NULL),
+             *insert_pystr = PyUnicode_FromString("insert"),
+             *current_object;
+
+    while ((current_object = PyObject_CallFunctionObjArgs(_next, iterable, NULL)) != NULL) {
+        if (PyObject_CallMethodObjArgs(
+                    (PyObject *)self,
+                    insert_pystr,
+                    PyObject_CallFunctionObjArgs(_hash, current_object),
+                    current_object,
+                    NULL
+                ) == NULL)
+        {
+
+            Py_DECREF(iterable);
+            Py_DECREF(insert_pystr);
+            Py_DECREF(current_object);
+
+            Py_INCREF(PyExc_RuntimeError);
+            PyErr_SetString(PyExc_RuntimeError, "Error trying to insert element into B Plus Tree.");
+
+            return -1;
+
+        }
+
+        Py_DECREF(current_object);
+
+    }
+
+    PyErr_Clear();
+
+    Py_DECREF(initializer);
+    Py_DECREF(iterable);
+    Py_DECREF(insert_pystr);
+
     return 0;
 
 }
-
-static void BPlusTree_tp_clear(BPlusTree *self) {
-    // TODO
-    return;
-}
-
-static void BPlusTree_tp_dealloc(BPlusTree *self) {
-    BPlusTree_tp_clear(self);
-    BPlusNode_dealloc(self->root);
-    Py_TYPE(self)->tp_free((PyObject *)self);
-}
-
 
 // BEGIN object methods
 static PyObject *BPlusTree_method_get_b(PyObject *self, PyObject *args) {
@@ -475,6 +548,8 @@ static PyObject *BPlusTree_method_insert(PyObject *self, PyObject *args) {
     ix = BPlusLeaf_search(leaf, key, o);
 
     if (ix == -1) {
+        // The object already exists in the tree.
+        // Do nothing.
         Py_RETURN_NONE;
     } else if (ix == -2) {
         // We have a collision!
@@ -520,17 +595,62 @@ static PyObject *BPlusTree_method_contains(PyObject *self, PyObject *args) {
 
 }
 
-static PyMethodDef BPlusTree_tp_methods[] = {
+// following is for debugging purposes and is not expected to be useful generally.
+static PyObject *BPlusTree_method_get_indices(PyObject *self, PyObject *args) {
+
+    BPlusTree *tree = (BPlusTree *)self;
+    // stack is to be the top level list, indices is the current second level list
+    PyObject *stack, *indices;
+    // ix is the index of the current BPlusNode, max_ix is the number of BPlusNodes in {nodes}
+    int ix, max_ix;
+    // nodes is eventually going to contain pointers to every node in the tree
+    BPlusNode *nodes[1000];
+    // current is a pointer to the current node
+    BPlusNode *current;
+
+    stack = PyList_New(0);
+    ix = 0;
+    max_ix = 1;
+    nodes[0] = tree->root;
+    
+    while (ix < max_ix) {
+
+        // build the list of indices
+        indices = PyList_New(0);
+        current = nodes[ix];
+        for (int jx = 0; jx < current->indices->size; jx++) {
+            PyList_Append(indices, PyLong_FromLong(((l64 *)current->indices->arr)[jx]));
+        }
+        PyList_Append(stack, indices);
+        Py_DECREF(indices);
+
+        // update nodes
+        if (current->children != NULL) {
+            for (int jx = 0; jx < current->children->size; jx++) {
+                nodes[max_ix] = ((BPlusNode **)current->children->arr)[jx];
+                max_ix++;
+            }
+        }
+
+        ix++;
+
+    }
+
+    return stack;
+}
+
+static PyMethodDef BPlusTree_tp_methods[] = { 
     {"get_b", BPlusTree_method_get_b, METH_NOARGS, "Return the maximum child nodes per node in the tree."},
     {"get_size", BPlusTree_method_get_size, METH_NOARGS, "Return the total number of values contained in the tree."},
     {"insert", BPlusTree_method_insert, METH_VARARGS, "Takes a long integer value {key} and object {o}, and inserts {o} into the tree with index {key}."},
     {"contains", BPlusTree_method_contains, METH_VARARGS, "Takes a long integer value {key} and object {o}, returns {True} if the tree contains {o} and {False} otherwise."},
+    {"get_indices", BPlusTree_method_get_indices, METH_NOARGS, "Traverses the tree and returns a list of lists, where each 2nd level list represents a node, and each item is an index."},
     {NULL, NULL, 0, NULL}
 };
 
 static PyTypeObject BPlusTreeType = {
     PyVarObject_HEAD_INIT(NULL, 0)
-    "bplus.BPlusTree",                          /*tp_name*/
+    "five_one_one_bplus.c.BPlusTree",           /*tp_name*/
     sizeof(BPlusTree),                          /*tp_basicsize*/
     0,                                          /*tp_itemsize*/
     (destructor)BPlusTree_tp_dealloc,           /*tp_dealloc*/

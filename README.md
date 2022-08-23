@@ -24,12 +24,15 @@ make install
 
 To make use of the BPlusSet class:
 ```
-from five_one_one_bplus import BPlusSet
-
-my_set = BPlusSet(b=8)
-
-my_set.add(511)
-my_set.add("mel ott")
-
-assert len(my_set) == 2
+>>> from five_one_one_bplus import BPlusSet
+>>> s = BPlusSet([511, "mel ott"], b=16)
+>>> 511 in s
+True
+>>> "mel ott" in s
+True
+>>> "foo" in s
+False
+>>> s.add("foo")
+>>> "foo" in s
+True
 ```
