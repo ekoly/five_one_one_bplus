@@ -36,3 +36,10 @@ False
 >>> "foo" in s
 True
 ```
+
+### TODOs
+
+* unit tests!
+* implement iteration
+* implement item deletion
+* add support for key/value pairs (for map type)

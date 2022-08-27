@@ -3,13 +3,14 @@
 #include <stdio.h>
 
 
-#define DEBUG 1
+#define DEBUG 0
 
 static PyObject
     *_builtins = NULL,
     *_iter = NULL,
     *_next = NULL,
-    *_hash = NULL;
+    *_hash = NULL,
+    *_print = NULL;
 
 typedef long long int l64;
 
@@ -33,16 +34,50 @@ int setBuiltins() {
     
     if (_builtins == NULL) {
         _builtins = PyEval_GetBuiltins();
+        if (_builtins == NULL) {
+            return 0;
+        }
         _iter = PyDict_GetItemString(_builtins, "iter");
+        if (_iter == NULL) {
+            return 0;
+        }
         _next = PyDict_GetItemString(_builtins, "next");
+        if (_next == NULL) {
+            return 0;
+        }
         _hash = PyDict_GetItemString(_builtins, "hash");
+        if (_hash == NULL) {
+            return 0;
+        }
+        _print = PyDict_GetItemString(_builtins, "print");
+        if (_print == NULL) {
+            return 0;
+        }
     }
+    
+    return 1;
 
-    if (_builtins != NULL && _iter != NULL && _next != NULL && _hash != NULL) {
-        return 1;
-    }
+}
 
-    return 0;
+// debugging function for printing reference count.
+void printRefCount(char *label, PyObject *x) {
+
+    PyObject
+        *py_label = PyUnicode_FromString(label),
+        *py_refcnt = PyLong_FromLong(x->ob_refcnt);
+
+    setBuiltins();
+
+    PyObject_CallFunctionObjArgs(
+        _print,
+        py_label,
+        x,
+        py_refcnt,
+        NULL
+    );
+
+    Py_DECREF(py_label);
+    Py_DECREF(py_refcnt);
 
 }
 
@@ -103,8 +138,17 @@ int insert_PyObject(Array32 *a, int index, PyObject *x) {
         arr[i+1] = arr[i];
     }
     arr[index] = x;
-    Py_INCREF(x);
     a->size++;
+    
+    #if DEBUG >= 2
+    printRefCount("insert_PyObject(): x before Py_INCREF:", x);
+    #endif
+
+    Py_INCREF(x);
+
+    #if DEBUG >= 2
+    printRefCount("insert_PyObject(): x after Py_INCREF:", x);
+    #endif
 
     return 1;
 }
@@ -418,130 +462,10 @@ void BPlusLeaf_split(BPlusTree *self, BPlusNode *leaf) {
 
 }
 
-// BEGIN tp methods
-static PyObject *BPlusTree_tp_new(PyTypeObject *subtype, PyObject *args, PyObject *kwargs) {
-    BPlusTree *self;
+PyObject *BPlusTree_insert(BPlusTree *tree, l64 key, PyObject *o) {
 
-    self = (BPlusTree *)subtype->tp_alloc(subtype, 0);
-
-    return (PyObject *)self;
-}
-
-static void BPlusTree_tp_clear(BPlusTree *self) {
-    // TODO
-    return;
-}
-
-static void BPlusTree_tp_dealloc(BPlusTree *self) {
-    BPlusTree_tp_clear(self);
-    BPlusNode_dealloc(self->root);
-    Py_TYPE(self)->tp_free((PyObject *)self);
-}
-
-static int BPlusTree_tp_init(BPlusTree *self, PyObject *args, PyObject *kwargs) {
-
-    int b;
-    PyObject *initializer;
-    static char *kwlist[] = {"initializer", "b", NULL};
-    BPlusNode *firstleaf;
-
-    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "Oi", kwlist, &initializer, &b)) {
-        return -1;
-    }
-
-    if (b < 2 || 255 < b) {
-        Py_INCREF(PyExc_TypeError);
-        PyErr_SetString(PyExc_TypeError, "BPlusTree Constructor got out of bounds b: needs to be in [2, 255].");
-        return -1;
-    }
-
-    self->root = BPlusBranch_init(b);
-
-    firstleaf = BPlusLeaf_init(b);
-    firstleaf->parent = self->root;
-
-    insert_BPlusNode(self->root->children, 0, firstleaf);
-
-    self->b = b;
-
-    if (initializer == Py_None) {
-
-        Py_DECREF(initializer);
-
-        return 0;
-
-    }
-
-    if (setBuiltins() == 0) {
-        
-        BPlusTree_tp_dealloc(self);
-
-        Py_INCREF(PyExc_RuntimeError);
-        PyErr_SetString(PyExc_RuntimeError, "Got error setting builtins.");
-
-        return -1;
-
-    }
-
-    PyObject *iterable = PyObject_CallFunctionObjArgs(_iter, initializer, NULL),
-             *insert_pystr = PyUnicode_FromString("insert"),
-             *current_object;
-
-    while ((current_object = PyObject_CallFunctionObjArgs(_next, iterable, NULL)) != NULL) {
-        if (PyObject_CallMethodObjArgs(
-                    (PyObject *)self,
-                    insert_pystr,
-                    PyObject_CallFunctionObjArgs(_hash, current_object),
-                    current_object,
-                    NULL
-                ) == NULL)
-        {
-
-            Py_DECREF(iterable);
-            Py_DECREF(insert_pystr);
-            Py_DECREF(current_object);
-
-            Py_INCREF(PyExc_RuntimeError);
-            PyErr_SetString(PyExc_RuntimeError, "Error trying to insert element into B Plus Tree.");
-
-            return -1;
-
-        }
-
-        Py_DECREF(current_object);
-
-    }
-
-    PyErr_Clear();
-
-    Py_DECREF(initializer);
-    Py_DECREF(iterable);
-    Py_DECREF(insert_pystr);
-
-    return 0;
-
-}
-
-// BEGIN object methods
-static PyObject *BPlusTree_method_get_b(PyObject *self, PyObject *args) {
-    return PyLong_FromLong(((BPlusTree *)self)->b);
-}
-
-static PyObject *BPlusTree_method_get_size(PyObject *self, PyObject *args) {
-    return PyLong_FromLong(((BPlusTree *)self)->size);
-}
-
-static PyObject *BPlusTree_method_insert(PyObject *self, PyObject *args) {
-
-    BPlusTree *tree = (BPlusTree *)self;
-    l64 key;
-    PyObject *o;
     BPlusNode *leaf = NULL;
     int ix;
-
-    if (!PyArg_ParseTuple(args, "LO", &key, &o)) {
-        return NULL;
-    }
 
     leaf = BPlusNode_search(tree->root, key);
 
@@ -571,27 +495,279 @@ static PyObject *BPlusTree_method_insert(PyObject *self, PyObject *args) {
 
 }
 
-static PyObject *BPlusTree_method_contains(PyObject *self, PyObject *args) {
+
+
+// BEGIN tp methods
+static PyObject *BPlusTree_tp_new(PyTypeObject *subtype, PyObject *args, PyObject *kwargs) {
+    BPlusTree *self;
+
+    self = (BPlusTree *)subtype->tp_alloc(subtype, 0);
+
+    return (PyObject *)self;
+}
+
+static void BPlusTree_tp_clear(BPlusTree *self) {
+    // TODO
+    return;
+}
+
+static void BPlusTree_tp_dealloc(BPlusTree *self) {
+    BPlusTree_tp_clear(self);
+    BPlusNode_dealloc(self->root);
+    Py_TYPE(self)->tp_free((PyObject *)self);
+}
+
+static int BPlusTree_tp_init(BPlusTree *self, PyObject *args, PyObject *kwargs) {
+
+    // set _builtins, _hash, _iter, _next, etc (builtin methods)
+    if (setBuiltins() == 0) {
+        
+        Py_INCREF(PyExc_RuntimeError);
+        PyErr_SetString(PyExc_RuntimeError, "Got error setting builtins.");
+
+        return -1;
+
+    }
+
+    #if DEBUG >= 1
+
+    PyObject
+        *debug = PyLong_FromLong(DEBUG),
+        *msg1 = PyUnicode_FromString("WARNING: this module was compiled in debug mode:"),
+        *msg2 = PyUnicode_FromString("; there will be extraneous print statements.");
+
+    if (PyObject_CallFunctionObjArgs(_print, msg1, debug, msg2, NULL) == NULL) {
+        
+        Py_INCREF(PyExc_RuntimeError);
+        PyErr_SetString(PyExc_RuntimeError, "Got error calling print statement.");
+
+        return -1;
+
+    }
+
+    Py_DECREF(debug);
+    Py_DECREF(msg1);
+    Py_DECREF(msg2);
+
+    #endif
+
+    int b;
+    PyObject *initializer;
+    static char *kwlist[] = {"initializer", "b", NULL};
+    BPlusNode *firstleaf;
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "Oi", kwlist, &initializer, &b)) {
+        return -1;
+    }
+
+    #if DEBUG >= 2
+    printRefCount("constructor: object directly after argparse:", initializer);
+    #endif
+
+    if (b < 2 || 255 < b) {
+        Py_INCREF(PyExc_TypeError);
+        PyErr_SetString(PyExc_TypeError, "BPlusTree Constructor got out of bounds b: needs to be in [2, 255].");
+        return -1;
+    }
+
+    self->root = BPlusBranch_init(b);
+
+    firstleaf = BPlusLeaf_init(b);
+    firstleaf->parent = self->root;
+
+    insert_BPlusNode(self->root->children, 0, firstleaf);
+
+    self->b = b;
+
+    if (initializer == Py_None) {
+
+        // no need to decref because ref count is not increased by call to
+        // constructor
+        return 0;
+
+    }
+
+    PyObject
+        *iterable = PyObject_GetIter(initializer),
+        *current_object,
+        *insert_result;
+    l64 hash;
+
+    // we're done with our initializer
+    // again, no need to decref because ref count is not increased by call to
+    // constructor
+
+    #if DEBUG >= 2
+    printRefCount("constructor: iterable directly after creation:", iterable);
+    #endif
+
+    while ((current_object = PyIter_Next(iterable)) != NULL) {
+        
+        // calculate hash
+        if ((hash = PyObject_Hash(current_object)) == -1) {
+
+            Py_DECREF(iterable);
+
+            BPlusTree_tp_dealloc(self);
+
+            return -1;
+
+        }
+
+        // call self.insert(hash(o), o)
+        if ((insert_result = BPlusTree_insert(self, hash, current_object)) == NULL) {
+
+            Py_DECREF(iterable);
+
+            BPlusTree_tp_dealloc(self);
+
+            return -1;
+
+        }
+
+        #if DEBUG >= 2
+        printRefCount("constructor: insert_result directly after creation", insert_result);
+        #endif
+
+        Py_DECREF(insert_result);
+
+        #if DEBUG >= 2
+        printRefCount("constructor: insert_result directly after decref", insert_result);
+        #endif
+
+    }
+
+    // clear stop iteration exception
+    PyErr_Clear();
+
+    #if DEBUG >= 2
+    printRefCount("constructor: iterable directly before call to decref:", iterable);
+    #endif
+
+    Py_DECREF(iterable);
+
+    #if DEBUG >= 2
+    printRefCount("constructor: iterable directly before returning:", iterable);
+    #endif
+
+    return 0;
+
+}
+
+// return a {list_iterator} of the items in the tree
+// There are several reasons for this being implemented this way:
+//  1. to support safely modifying the tree during iteration
+//  2. to avoid needing to store information such as {current BPlusNode} and/or
+//      {current index} in the tree (which would be needed to support native
+//      iteration).
+//  3. to avoid needing to solve the problem of what to do when the user uses
+//      a {break} statement during iteration.
+static PyObject *BPlusTree_tp_iter(PyObject *self) {
+
+    BPlusTree *tree = (BPlusTree *)self;
+    BPlusNode *current = tree->root;
+    PyObject *container_list = PyList_New(tree->size),
+             *iterator;
+    int ix = 0;
+
+    #if DEBUG >= 2
+    printRefCount("BPlusTree_tp_iter: container_list directly after creation:", container_list);
+    #endif
+
+    if (setBuiltins() == 0) {
+
+        Py_DECREF(container_list);
+        Py_INCREF(PyExc_RuntimeError);
+        PyErr_SetString(PyExc_RuntimeError, "Error setting builtins.");
+
+        return NULL;
+
+    }
+
+    while (current->children != NULL) current = ((BPlusNode **)current->children->arr)[0];
+
+    while (current != NULL) {
+        for (int jx = 0; jx < current->values->size; jx++) {
+            // update reference to item because PyList_SetItem steals a reference
+            Py_INCREF(((PyObject **)current->values->arr)[jx]);
+            if (PyList_SetItem(container_list, ix, ((PyObject **)current->values->arr)[jx]) == -1) {
+                Py_DECREF(container_list);
+                return NULL;
+            };
+            ix++;
+        }
+        current = current->next;
+    }
+
+    iterator = PyObject_GetIter(container_list);
+    Py_DECREF(container_list);
+
+    if (iterator == NULL) {
+
+        Py_INCREF(PyExc_RuntimeError);
+        PyErr_SetString(PyExc_RuntimeError, "Error calling iter() on list object.");
+
+        return NULL;
+
+    }
+
+    #if DEBUG >= 2
+    printRefCount("BPlusTree_tp_iter: container_list directly after decref:", container_list);
+    printRefCount("BPlusTree_tp_iter: iterator directly after creation:", iterator);
+    #endif
+
+    return iterator;
+
+}
+
+Py_ssize_t BPlusTree_sq_length(PyObject *self) {
+    return ((BPlusTree *)self)->size;
+}
+
+int BPlusTree_sq_contains(PyObject *self, PyObject *value) {
+
+    BPlusTree *tree = (BPlusTree *)self;
+    l64 key;
+    BPlusNode *leaf = NULL;
+    int ix;
+
+    key = PyObject_Hash(value);
+
+    leaf = BPlusNode_search(tree->root, key);
+
+    ix = BPlusLeaf_search(leaf, key, value);
+
+    // see comments above BPlusLeaf_search for info about what -1 means
+    if (ix == -1) {
+        return 1;
+    }
+ 
+    return 0;
+
+}
+
+// BEGIN object methods
+static PyObject *BPlusTree_method_get_b(PyObject *self, PyObject *args) {
+    return PyLong_FromLong(((BPlusTree *)self)->b);
+}
+
+static PyObject *BPlusTree_method_add(PyObject *self, PyObject *args) {
 
     BPlusTree *tree = (BPlusTree *)self;
     l64 key;
     PyObject *o;
-    BPlusNode *leaf = NULL;
-    int ix;
 
-    if (!PyArg_ParseTuple(args, "LO", &key, &o)) {
+    if (!PyArg_ParseTuple(args, "O", &o)) {
         return NULL;
     }
 
-    leaf = BPlusNode_search(tree->root, key);
-
-    ix = BPlusLeaf_search(leaf, key, o);
-
-    if (ix == -1) {
-        Py_RETURN_TRUE;
+    if ((key = PyObject_Hash(o)) == -1) {
+        Py_INCREF(PyExc_TypeError);
+        PyErr_SetString(PyExc_TypeError, "Got unhashable object.");
+        return NULL;
     }
- 
-    Py_RETURN_FALSE;
+
+    return BPlusTree_insert(tree, key, o);
 
 }
 
@@ -619,7 +795,7 @@ static PyObject *BPlusTree_method_get_indices(PyObject *self, PyObject *args) {
         indices = PyList_New(0);
         current = nodes[ix];
         for (int jx = 0; jx < current->indices->size; jx++) {
-            PyList_Append(indices, PyLong_FromLong(((l64 *)current->indices->arr)[jx]));
+            PyList_Append(indices, PyLong_FromLongLong(((l64 *)current->indices->arr)[jx]));
         }
         PyList_Append(stack, indices);
         Py_DECREF(indices);
@@ -637,13 +813,25 @@ static PyObject *BPlusTree_method_get_indices(PyObject *self, PyObject *args) {
     }
 
     return stack;
+
 }
+
+static PySequenceMethods BPlusTree_sq_methods = {
+    (lenfunc)BPlusTree_sq_length,               /*sq_length*/
+    0,                                          /*sq_concat*/
+    0,                                          /*sq_repeat*/
+    0,                                          /*sq_item*/
+    0,                                          /*was_sq_slice*/
+    0,                                          /*sq_ass_item*/
+    0,                                          /*was_sq_ass_slice*/
+    BPlusTree_sq_contains,                      /*sq_contains*/
+    0,                                          /*sq_inplace_concat*/
+    0,                                          /*sq_inplace_repeat*/
+};
 
 static PyMethodDef BPlusTree_tp_methods[] = { 
     {"get_b", BPlusTree_method_get_b, METH_NOARGS, "Return the maximum child nodes per node in the tree."},
-    {"get_size", BPlusTree_method_get_size, METH_NOARGS, "Return the total number of values contained in the tree."},
-    {"insert", BPlusTree_method_insert, METH_VARARGS, "Takes a long integer value {key} and object {o}, and inserts {o} into the tree with index {key}."},
-    {"contains", BPlusTree_method_contains, METH_VARARGS, "Takes a long integer value {key} and object {o}, returns {True} if the tree contains {o} and {False} otherwise."},
+    {"add", BPlusTree_method_add, METH_VARARGS, "Takes object {o}, computes the hash, and inserts {o} into the tree with index of the hash."},
     {"get_indices", BPlusTree_method_get_indices, METH_NOARGS, "Traverses the tree and returns a list of lists, where each 2nd level list represents a node, and each item is an index."},
     {NULL, NULL, 0, NULL}
 };
@@ -660,7 +848,7 @@ static PyTypeObject BPlusTreeType = {
     0,                                          /*tp_compare*/
     0,                                          /*tp_repr*/
     0,                                          /*tp_as_number*/
-    0,                                          /*tp_as_sequence*/
+    &BPlusTree_sq_methods,                      /*tp_as_sequence*/
     0,                                          /*tp_as_mapping*/
     0,                                          /*tp_hash */
     0,                                          /*tp_call*/
@@ -668,13 +856,13 @@ static PyTypeObject BPlusTreeType = {
     0,                                          /*tp_getattro*/
     0,                                          /*tp_setattro*/
     0,                                          /*tp_as_buffer*/
-    Py_TPFLAGS_DEFAULT,                         /*tp_flags*/
+    Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,   /*tp_flags*/
     0,                                          /*tp_doc*/
     0,                                          /*tp_traverse*/
     (inquiry)BPlusTree_tp_clear,                /*tp_clear*/
     0,                                          /*tp_richcompare*/
     0,                                          /*tp_weaklistoffset*/
-    0,                                          /*tp_iter*/
+    (getiterfunc)BPlusTree_tp_iter,             /*tp_iter*/
     0,                                          /*tp_iternext*/
     BPlusTree_tp_methods,                       /*tp_methods*/
     0,                                          /*tp_members*/

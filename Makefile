@@ -11,3 +11,6 @@ reinstall:
 	$(MAKE) clean
 	pip uninstall -y five-one-one-bplus
 	$(MAKE) install
+
+test: reinstall
+	python -m pytest
