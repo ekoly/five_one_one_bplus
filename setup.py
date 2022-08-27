@@ -2,17 +2,16 @@
 B-Plus Tree Functionality as a C extension
 """
 import setuptools
-from Cython.Build import cythonize
 
 with open("README.md", "r") as f:
     LONG_DESCRIPTION = f.read()
 
 setuptools.setup(
     name="five-one-one-bplus",
-    version="0.0.1",
+    version="0.0.2",
     author="ecowley",
     author_email="erik@stromsy.com",
-    description="a collection of helper methods",
+    description="A module of python containers, implemented in C on top of a B-Plus Tree",
     long_description=LONG_DESCRIPTION,
     long_description_content_type="text/markdown",
     url="https://datascience.stromsy.com",
@@ -28,7 +27,7 @@ setuptools.setup(
             ["c/bplus.c",],
         ),
     ],
-    python_requires=">=3.8",
+    python_requires=">=3.10",
     classifiers=["Programming Language :: Python :: 3",
         "License :: OSI Approved :: MIT License",
         "Operating System :: OS Independent",

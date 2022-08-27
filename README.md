@@ -3,15 +3,19 @@
 ### Overview
 
 This is a practice project to familiarize myself with Python's C API. The goal
-is to implement a B Plus Tree in C that is usable in Python. Eventually types
-such as sets and maps that make use of B Plus Trees "under the hood" may be
-added.
+is to implement a B-Plus Tree in C that is usable in Python.
 
 ### Status
 
-The project is in a pre-alpha phase. PyObject insertion functionality has been
-implemented, however it occassionally segfaults for unknown reasons. Deletion
-and iteration functionality has not been started yet.
+The project is in an alpha phase. PyObject insertion functionality has been
+implemented. Support for `iter()` has been implemented, however it currently
+involves placing the contents of the tree in a list and then returning a
+`list_iterator` (it is hoped that this will be improved upon). Item deletion
+functionality has not yet been started. Support for union and intersection is
+hoped to be added in the near future.
+
+The project will be labeled as being in a beta phase when deletion
+functionality is implemented.
 
 ### Usage
 
@@ -37,9 +41,12 @@ False
 True
 ```
 
+To run the tests:
+```
+make test
+```
+
 ### TODOs
 
-* unit tests!
-* implement iteration
 * implement item deletion
 * add support for key/value pairs (for map type)
