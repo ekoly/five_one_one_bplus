@@ -1,7 +1,4 @@
 import pytest
-import random
-import sys
-from collections import namedtuple
 
 from five_one_one_bplus import BPlusSet
 

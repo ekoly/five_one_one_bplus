@@ -495,6 +495,62 @@ PyObject *BPlusTree_insert(BPlusTree *tree, l64 key, PyObject *o) {
 
 }
 
+// comparison helper function
+// currently does not check for hash collisions!
+int BPlusTree_cmp(BPlusTree *tree1, BPlusTree *tree2) {
+
+    BPlusNode 
+        *curr1 = tree1->root,
+        *curr2 = tree2->root;
+    l64
+        item1,
+        item2;
+    int 
+        ix1 = 0,
+        ix2 = 0;
+
+    if (tree1->size != tree2->size) {
+        return 0;
+    }
+
+    while (curr1->children != NULL) curr1 = ((BPlusNode **)curr1->children->arr)[0];
+    while (curr2->children != NULL) curr2 = ((BPlusNode **)curr2->children->arr)[0];
+
+    // breaking is done during the loop
+    while (1) {
+
+        if (ix1 >= curr1->indices->size) {
+            curr1 = curr1->next;
+            ix1 = 0;
+        }
+        if (ix2 >= curr2->indices->size) {
+            curr2 = curr2->next;
+            ix2 = 0;
+        }
+
+        if (curr1 == NULL || curr2 == NULL) {
+            break;
+        }
+
+        item1 = ((l64 *)curr1->indices->arr)[ix1];
+        item2 = ((l64 *)curr2->indices->arr)[ix2];
+
+        if (item1 != item2) {
+            return 0;
+        }
+
+        ix1++;
+        ix2++;
+
+    }
+
+    if (curr1 != NULL || curr2 != NULL) {
+        return 0;
+    }
+
+    return 1;
+
+}
 
 
 // BEGIN tp methods
@@ -651,6 +707,27 @@ static int BPlusTree_tp_init(BPlusTree *self, PyObject *args, PyObject *kwargs) 
     #endif
 
     return 0;
+
+}
+
+// Currently does not check for hash collisions!
+static PyObject *BPlusTree_tp_richcompare(PyObject *o1, PyObject *o2, int op) {
+
+    if (op == Py_EQ) {
+        if (BPlusTree_cmp((BPlusTree *)o1, (BPlusTree *)o2) == 1) {
+            Py_RETURN_TRUE;
+        } else {
+            Py_RETURN_FALSE;
+        }
+    } else if (op == Py_NE) {
+        if (BPlusTree_cmp((BPlusTree *)o1, (BPlusTree *)o2) == 0) {
+            Py_RETURN_TRUE;
+        } else {
+            Py_RETURN_FALSE;
+        }
+    }
+
+    Py_RETURN_NOTIMPLEMENTED;
 
 }
 
@@ -860,7 +937,7 @@ static PyTypeObject BPlusTreeType = {
     0,                                          /*tp_doc*/
     0,                                          /*tp_traverse*/
     (inquiry)BPlusTree_tp_clear,                /*tp_clear*/
-    0,                                          /*tp_richcompare*/
+    BPlusTree_tp_richcompare,                   /*tp_richcompare*/
     0,                                          /*tp_weaklistoffset*/
     (getiterfunc)BPlusTree_tp_iter,             /*tp_iter*/
     0,                                          /*tp_iternext*/
