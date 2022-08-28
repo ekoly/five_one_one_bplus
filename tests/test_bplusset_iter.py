@@ -1,4 +1,5 @@
 import pytest
+import sys
 
 from tests.utils import (
     parametrized_b,
@@ -62,3 +63,18 @@ def test_iter_initializer_with_duplicates(bplusset_factory, list_from_range):
     res = list(s)
     
     assert sorted(res) == sorted(list_from_range)
+
+@parametrized_b
+@parametrized_range
+def test_iter_initializer_contains_collision(bplusset_factory, list_from_range):
+    """
+    Tests that a BPlusSet is able to:
+        1. be initialized from a non-empty iterable that contains collisions
+        2. be converted to a list
+    """
+    control = list_from_range + [sys.maxsize]
+    s = bplusset_factory(control)
+
+    res = list(s)
+    
+    assert sorted(res) == sorted(control)

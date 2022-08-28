@@ -38,8 +38,8 @@ parametrized_range = pytest.mark.parametrize(
     (
         [RangeParam(0, 1<<x, 1) for x in range(3, 12, 2)]
         + [RangeParam(1<<x, 0, -1) for x in range(3, 12, 2)]
-        + [RangeParam(TRILLION, TRILLION+(1<<x), 1) for x in range(3, 12, 2)]
-        + [RangeParam(TRILLION+(1<<x), TRILLION, -1) for x in range(3, 12, 2)]
+        + [RangeParam(BILLION, BILLION+(1<<x), 1) for x in range(3, 12, 2)]
+        + [RangeParam(BILLION+(1<<x), BILLION, -1) for x in range(3, 12, 2)]
     ),
     indirect=True
 )

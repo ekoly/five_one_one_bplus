@@ -1,4 +1,5 @@
 import pytest
+import sys
 
 from tests.utils import (
     parametrized_b,
@@ -140,4 +141,17 @@ def test_range_initializer_random_strings_duplicates_len(bplusset_factory):
     for x in control:
         s.add(x)
     
+    assert len(s) == len(control)
+
+@parametrized_b
+@parametrized_range
+def test_range_initializer_contains_collisions(bplusset_factory, list_from_range):
+    """
+    Test that a BPlusSet is able to:
+        1. be initialized from a non-empty iterable that contains collisions
+        2. ends up with the correct len()
+    """
+    control = list_from_range + [sys.maxsize]
+    s = bplusset_factory(control)
+
     assert len(s) == len(control)

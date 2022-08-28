@@ -267,31 +267,222 @@ BPlusNode *BPlusNode_search(BPlusNode *root, l64 key) {
 // helper function for determining if {leaf} contains the index {key} and
 // PyObject {o} combination.
 // Returns either:
-//  1. If {key}/{o} are not in {leaf}, an integer value {ix} representing the
-//      index at which they should be inserted.
-//  2. If {key}/{o} are in {leaf}, returns -1 indicating {o} is already
-//      contained.
-//  3. If {key} is in leaf but not {o}, returns -2 indicating a collision.
+//  1. If {key}/{o} are not in {leaf}, -1
+//  2. If {key}/{o} are in {leaf}, an integer value {ix} representing the
+//      location of {o}
+//  3. If there is an error, -2
 int BPlusLeaf_search(BPlusNode *leaf, l64 key, PyObject *o) {
 
     int ix = bisect_left(leaf->indices, key);
 
     if (ix >= leaf->indices->size) {
-        return ix;
-    }
-
-    if (((l64 *)leaf->indices->arr)[ix] != key) {
-        return ix;
-    }
-
-    if (PyObject_RichCompareBool(o, ((PyObject **)leaf->values->arr)[ix], Py_EQ) == 1) {
-        // {o} is already contained in the BPlusTree
         return -1;
     }
 
+    if (((l64 *)leaf->indices->arr)[ix] != key) {
+        return -1;
+    }
+
+    PyObject *val_ix = ((PyObject **)leaf->values->arr)[ix];
+
+    if (PyObject_RichCompareBool(o, val_ix, Py_EQ) == 1) {
+        // {o} is already contained in the BPlusTree
+        return 1;
+    }
+
     // We have a collision!
-    // TODO figure out a better way of handling this
-    return -2;
+    // Current strategy for dealing with this is replace the object at {ix}
+    // with a list, and add all items with the same hash to the list
+    // This works because lists are an unhashable type and therefore cannot
+    // be mistaken for an object intentionally in the tree
+    int res = PyObject_IsInstance(val_ix, (PyObject *)&PyList_Type);
+    PyObject *collision_container;
+
+    if (res == -1) {
+        // error determining if the value at {ix} is a list
+        return -2;
+    } else if (res == 0) {
+        // not a list, therefore not a known collision and {o} is not in the
+        // list
+        return -1;
+    }
+
+    collision_container = val_ix;
+
+    // iterate through the list and check if {o} is contained
+    for (int jx = 0; jx < PyList_Size(collision_container); jx++) {
+        val_ix = PyList_GetItem(collision_container, jx);
+        if (PyObject_RichCompareBool(o, val_ix, Py_EQ) == 1) {
+            return 1;
+        }
+    }
+
+    // {o} is not in the list
+    return 0;
+
+}
+
+// Helper method for inserting {key}/{o} into the leaf.
+// Assumes {leaf} is the proper leaf within the tree to insert {o}.
+// Returns one of the following:
+//  1. If {o} was not already in the tree and the insert operation was
+//      successful, returns 1
+//  2. If {o} was already in the tree, does nothing and returns 0
+//  3. On an error, returns -1
+int BPlusLeaf_insert(BPlusNode *leaf, l64 key, PyObject *o) {
+
+    int ix = bisect_left(leaf->indices, key);
+
+    if (ix >= leaf->indices->size) {
+        #if DEBUG >= 1
+        PyObject *msg0 = PyUnicode_FromString("BPlusLeaf_insert: Appending object in leaf");
+        if (PyObject_CallFunctionObjArgs(_print, msg0, o, NULL) == NULL) {
+            Py_DECREF(msg0);
+            Py_INCREF(PyExc_RuntimeError);
+            PyErr_SetString(PyExc_RuntimeError, "Got error calling print statement.");
+            return -1;
+        }
+        Py_DECREF(msg0);
+        #endif
+        insert_l64(leaf->indices, ix, key);
+        insert_PyObject(leaf->values, ix, o);
+
+        return 1;
+    }
+
+    if (((l64 *)leaf->indices->arr)[ix] != key) {
+        #if DEBUG >= 1
+        PyObject
+            *msg1 = PyUnicode_FromString("BPlusLeaf_insert: inserting object in leaf"),
+            *msg2 = PyUnicode_FromString("at index"),
+            *pyobj_ix = PyLong_FromLong(ix);
+        if (PyObject_CallFunctionObjArgs(_print, msg1, o, msg2, pyobj_ix, NULL) == NULL) {
+            Py_DECREF(msg1);
+            Py_DECREF(msg2);
+            Py_DECREF(pyobj_ix);
+            Py_INCREF(PyExc_RuntimeError);
+            PyErr_SetString(PyExc_RuntimeError, "Got error calling print statement.");
+            return -1;
+        }
+        Py_DECREF(msg1);
+        Py_DECREF(msg2);
+        Py_DECREF(pyobj_ix);
+        #endif
+        insert_l64(leaf->indices, ix, key);
+        insert_PyObject(leaf->values, ix, o);
+
+        return 1;
+    }
+
+    PyObject *val_ix = ((PyObject **)leaf->values->arr)[ix];
+
+    if (PyObject_RichCompareBool(o, val_ix, Py_EQ) == 1) {
+        // {o} is already contained in the BPlusTree
+        #if DEBUG >= 1
+        PyObject
+            *msg4 = PyUnicode_FromString("BPlusLeaf_insert: object already exists in leaf");
+        if (PyObject_CallFunctionObjArgs(_print, msg4, o, NULL) == NULL) {
+            Py_DECREF(msg4);
+            Py_INCREF(PyExc_RuntimeError);
+            PyErr_SetString(PyExc_RuntimeError, "Got error calling print statement.");
+            return -1;
+        }
+        Py_DECREF(msg4);
+        #endif
+        return 0;
+    }
+
+    // We have a collision!
+    // Current strategy for dealing with this is replace the object at {ix}
+    // with a list, and add all items with the same hash to the list
+    // This works because lists are an unhashable type and therefore cannot
+    // be mistaken for an object intentionally in the tree
+    int res = PyObject_IsInstance(val_ix, (PyObject *)&PyList_Type);
+    PyObject *collision_container;
+
+    if (res == -1) {
+        // error
+        Py_INCREF(PyExc_RuntimeError);
+        PyErr_SetString(PyExc_RuntimeError, "Got error checking if existing value is a list.");
+        return -1;
+    } else if (res == 0) {
+        #if DEBUG >= 1
+        PyObject
+            *msg5 = PyUnicode_FromString("BPlusLeaf_insert: got collision: creating new collision container");
+        if (PyObject_CallFunctionObjArgs(_print, msg5, NULL) == NULL) {
+            Py_DECREF(msg5);
+            Py_INCREF(PyExc_RuntimeError);
+            PyErr_SetString(PyExc_RuntimeError, "Got error calling print statement.");
+            return -1;
+        }
+        Py_DECREF(msg5);
+        #endif
+        // not already a list, create one
+        collision_container = PyList_New(1);
+        ((PyObject **)leaf->values->arr)[ix] = collision_container;
+        // SetItem steals a reference, which is acceptable in this case because
+        // we're removing it from the leaf container
+        PyList_SetItem(collision_container, 0, val_ix);
+    } else {
+        #if DEBUG >= 1
+        PyObject
+            *msg6 = PyUnicode_FromString("BPlusLeaf_insert: got collision: already exists a collision container:");
+        if (PyObject_CallFunctionObjArgs(_print, msg6, val_ix, NULL) == NULL) {
+            Py_DECREF(msg6);
+            Py_INCREF(PyExc_RuntimeError);
+            PyErr_SetString(PyExc_RuntimeError, "Got error calling print statement.");
+            return -1;
+        }
+        Py_DECREF(msg6);
+        #endif
+        // there is already a list, check if {o} is contained in it
+        collision_container = val_ix;
+        for (int jx = 0; jx < PyList_Size(collision_container); jx++) {
+            PyObject *subval = PyList_GetItem(collision_container, jx);
+            if (PyObject_RichCompareBool(o, subval, Py_EQ) == 1) {
+                return 0;
+            }
+        }
+    }
+
+    // if we get to this point, it means we have a {collision_container} that
+    // does not currently contain {o}
+
+    // the append operation increases refcount of {o}
+    res = PyList_Append(collision_container, o);
+    if (res == -1) {
+        // append operation failed
+        return -1;
+    }
+ 
+    // keep the list in sorted order
+    PyObject 
+        *pystr_sort = PyUnicode_FromString("sort"),
+        *pyobj_res;
+
+    pyobj_res = PyObject_CallMethodNoArgs(collision_container, pystr_sort);
+
+    if (pyobj_res == NULL) {
+        Py_DECREF(pystr_sort);
+        return -1;
+    }
+
+    #if DEBUG >= 1
+    PyObject
+        *msg7 = PyUnicode_FromString("BPlusLeaf_insert: collision container directly before return:");
+    if (PyObject_CallFunctionObjArgs(_print, msg7, collision_container, NULL) == NULL) {
+        Py_DECREF(msg7);
+        Py_INCREF(PyExc_RuntimeError);
+        PyErr_SetString(PyExc_RuntimeError, "Got error calling print statement.");
+        return -1;
+    }
+    Py_DECREF(msg7);
+    #endif
+
+    Py_DECREF(pystr_sort);
+    Py_DECREF(pyobj_res);
+
+    return 1;
  
 }
 
@@ -465,26 +656,20 @@ void BPlusLeaf_split(BPlusTree *self, BPlusNode *leaf) {
 PyObject *BPlusTree_insert(BPlusTree *tree, l64 key, PyObject *o) {
 
     BPlusNode *leaf = NULL;
-    int ix;
+    int res;
 
     leaf = BPlusNode_search(tree->root, key);
 
-    ix = BPlusLeaf_search(leaf, key, o);
+    res = BPlusLeaf_insert(leaf, key, o);
 
-    if (ix == -1) {
-        // The object already exists in the tree.
-        // Do nothing.
-        Py_RETURN_NONE;
-    } else if (ix == -2) {
-        // We have a collision!
-        // TODO figure out a better way of handling this
-        Py_INCREF(PyExc_RuntimeError);
-        PyErr_SetString(PyExc_RuntimeError, "Collision!");
+    if (res == -1) {
+        // an error occurred in the insert operation
+        // an error should already be set
         return NULL;
+    } else if (res == 0) {
+        // {o} was already in the list, do nothing
+        Py_RETURN_NONE;
     }
-
-    insert_l64(leaf->indices, ix, key);
-    insert_PyObject(leaf->values, ix, o);
 
     if (leaf->values->size > tree->b) {
         BPlusLeaf_split(tree, leaf);
@@ -496,7 +681,6 @@ PyObject *BPlusTree_insert(BPlusTree *tree, l64 key, PyObject *o) {
 }
 
 // comparison helper function
-// currently does not check for hash collisions!
 int BPlusTree_cmp(BPlusTree *tree1, BPlusTree *tree2) {
 
     BPlusNode 
@@ -505,6 +689,9 @@ int BPlusTree_cmp(BPlusTree *tree1, BPlusTree *tree2) {
     l64
         item1,
         item2;
+    PyObject
+        *value1,
+        *value2;
     int 
         ix1 = 0,
         ix2 = 0;
@@ -536,6 +723,13 @@ int BPlusTree_cmp(BPlusTree *tree1, BPlusTree *tree2) {
         item2 = ((l64 *)curr2->indices->arr)[ix2];
 
         if (item1 != item2) {
+            return 0;
+        }
+
+        value1 = ((PyObject **)curr1->values->arr)[ix1];
+        value2 = ((PyObject **)curr2->values->arr)[ix2];
+
+        if (PyObject_RichCompareBool(value1, value2, Py_EQ) != 1) {
             return 0;
         }
 
@@ -593,6 +787,10 @@ static int BPlusTree_tp_init(BPlusTree *self, PyObject *args, PyObject *kwargs) 
         *msg2 = PyUnicode_FromString("; there will be extraneous print statements.");
 
     if (PyObject_CallFunctionObjArgs(_print, msg1, debug, msg2, NULL) == NULL) {
+
+        Py_DECREF(debug);
+        Py_DECREF(msg1);
+        Py_DECREF(msg2);
         
         Py_INCREF(PyExc_RuntimeError);
         PyErr_SetString(PyExc_RuntimeError, "Got error calling print statement.");
@@ -743,9 +941,14 @@ static PyObject *BPlusTree_tp_iter(PyObject *self) {
 
     BPlusTree *tree = (BPlusTree *)self;
     BPlusNode *current = tree->root;
-    PyObject *container_list = PyList_New(tree->size),
-             *iterator;
-    int ix = 0;
+    PyObject
+        *container_list = PyList_New(tree->size),
+        *iterator,
+        *value,
+        *subvalue;
+    int
+        ix = 0,
+        res;
 
     #if DEBUG >= 2
     printRefCount("BPlusTree_tp_iter: container_list directly after creation:", container_list);
@@ -765,13 +968,37 @@ static PyObject *BPlusTree_tp_iter(PyObject *self) {
 
     while (current != NULL) {
         for (int jx = 0; jx < current->values->size; jx++) {
-            // update reference to item because PyList_SetItem steals a reference
-            Py_INCREF(((PyObject **)current->values->arr)[jx]);
-            if (PyList_SetItem(container_list, ix, ((PyObject **)current->values->arr)[jx]) == -1) {
+
+            value = ((PyObject **)current->values->arr)[jx];
+            res = PyObject_IsInstance(value, (PyObject *)&PyList_Type);
+
+            if (res == -1) {
+                // error determining if {value} is a list
                 Py_DECREF(container_list);
                 return NULL;
-            };
-            ix++;
+            } else if (res == 0) {
+                // {value} is not a list, handle it normally
+                // update reference to item because PyList_SetItem steals a reference
+                Py_INCREF(value);
+                if (PyList_SetItem(container_list, ix, value) == -1) {
+                    Py_DECREF(container_list);
+                    return NULL;
+                };
+                ix++;
+            } else {
+                // {value} is a list representing objects with hash collisions
+                // add each element of it to our container
+                for (int kx = 0; kx < PyList_Size(value); kx++) {
+                    subvalue = PyList_GetItem(value, kx);
+                    // update reference to item because PyList_SetItem steals a reference
+                    Py_INCREF(subvalue);
+                    if (PyList_SetItem(container_list, ix, subvalue) == -1) {
+                        Py_DECREF(container_list);
+                        return NULL;
+                    };
+                    ix++;
+                }
+            }
         }
         current = current->next;
     }
@@ -815,8 +1042,12 @@ int BPlusTree_sq_contains(PyObject *self, PyObject *value) {
     ix = BPlusLeaf_search(leaf, key, value);
 
     // see comments above BPlusLeaf_search for info about what -1 means
-    if (ix == -1) {
+    if (ix >= 0) {
+        // {value} is in the tree
         return 1;
+    } else if (ix == -2) {
+        // there was an error in the search operation
+        return -1;
     }
  
     return 0;
