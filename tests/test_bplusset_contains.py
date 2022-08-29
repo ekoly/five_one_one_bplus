@@ -218,3 +218,31 @@ def test_range_initializer_with_collision_assert_contains(bplusset_factory, list
     s = bplusset_factory(control)
 
     check_contains(s, control, [3, sys.maxsize])
+
+@parametrized_b
+def test_range_initializer_with_large_number_of_collisions_assert_contains(bplusset_factory):
+    """
+    Tests that a BPlusSet is able to:
+        1. be initialized from a non-empty iterable that has a large number of collisions
+        2. the `in` keyword works as expected
+    """
+    # [hash(x) for x in range(1, 129)] == [hash(x) for x in range(sys.maxsize-2, sys.maxsize+127)]
+    control = list(range(1, 129)) + list(range(sys.maxsize-2, sys.maxsize+127))
+
+    s = bplusset_factory(control)
+
+    check_contains(s, control, get_subset(control))
+
+@parametrized_b
+def test_range_initializer_with_large_number_of_collisions_assert_not_contains(bplusset_factory):
+    """
+    Tests that a BPlusSet is able to:
+        1. be initialized from a non-empty iterable that has a large number of collisions
+        2. the `in` keyword works as expected
+    """
+    # [hash(x) for x in range(1, 129)] == [hash(x) for x in range(sys.maxsize-2, sys.maxsize+127)]
+    control = list(range(1, 129)) + list(range(sys.maxsize-2, sys.maxsize+127))
+
+    s = bplusset_factory(control)
+
+    check_contains(s, control, list(range(500, 555)))
