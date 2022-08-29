@@ -1,104 +1,11 @@
 #include <Python.h>
 #include "structmember.h"
-#include <stdio.h>
+#include "bplustypes.h"
+#include "general.h"
+#include "array32.h"
+#include "bplusnode.h"
+#include "bplustree.h"
 
-
-#define DEBUG 0
-
-// globals for builtin methods
-// these should be set the first time a BPlusTree is instantiated
-static PyObject
-    *_builtins = NULL,
-    *_iter = NULL,
-    *_next = NULL,
-    *_hash = NULL,
-    *_print = NULL;
-
-// convenience type for storing hashes
-typedef long long int l64;
-
-// convenience type for representing arrays
-// we'll have {Array32} objects storing {l64}, {PyObject *}, and {BPlusNode *}.
-typedef struct Array32 {
-    void *arr;
-    int size;
-} Array32;
-
-// Our basic node object.
-// May be either a "leaf node" (no child nodes) or a "branch node" (has child
-// nodes).
-//  1. All nodes have {indices} which is an {Array32} storing {l64} hashes.
-//  2. All nodes besides the root node have a {parent} which is a pointer to
-//      the parent node.
-//  3. "branches" have {children} which is an {Array32} storing {BPlusNode *}.
-//  4. "leaves" have {values} which is an {Array32} storing {PyObject *}.
-//  5. "leaves" also have {prev} and {next}, which are pointers to the
-//      neighboring leaves.
-typedef struct BPlusNode {
-    Array32 *indices;
-    Array32 *values;
-    Array32 *children;
-    struct BPlusNode *parent;
-    struct BPlusNode *prev;
-    struct BPlusNode *next;
-} BPlusNode;
-
-
-// Documentation for the following functions can be found near the function
-// definitions
-
-// BEGIN general helper function headers
-int setBuiltins();
-void printRefCount(char *label, PyObject *x);
-
-// BEGIN Array32 helper function headers
-int bisect_left(Array32 *a, l64 x);
-int bisect_right(Array32 *a, l64 x);
-int insert_l64(Array32 *a, int index, l64 x);
-int insert_PyObject(Array32 *a, int index, PyObject *x);
-int insert_BPlusNode(Array32 *a, int index, BPlusNode *x);
-
-// BEGIN BPlusNode helper functions
-BPlusNode *BPlusNode_init(int b);
-BPlusNode *BPlusLeaf_init(int b);
-BPlusNode *BPlusBranch_init(int b);
-void BPlusNode_dealloc(BPlusNode *node);
-BPlusNode *BPlusNode_search(BPlusNode *root, l64 key);
-int BPlusLeaf_search(BPlusNode *leaf, l64 key, PyObject *o);
-int BPlusLeaf_insert(BPlusNode *leaf, l64 key, PyObject *o);
-
-// start defining our python type
-typedef struct BPlusTree {
-    PyObject_HEAD
-    BPlusNode *root;
-    int b;
-    int size;
-    BPlusNode *iter_current_node;
-    int iter_current_index;
-} BPlusTree;
-
-// BEGIN BPlusNode helper method headers
-void BPlusBranch_split(BPlusTree *self, BPlusNode *branch);
-void BPlusLeaf_split(BPlusTree *self, BPlusNode *leaf);
-PyObject *BPlusTree_insert(BPlusTree *tree, l64 key, PyObject *o);
-int BPlusTree_cmp(BPlusTree *tree1, BPlusTree *tree2);
-
-// BEGIN tp method headers
-static PyObject *BPlusTree_tp_new(PyTypeObject *subtype, PyObject *args, PyObject *kwargs);
-static void BPlusTree_tp_clear(BPlusTree *self);
-static void BPlusTree_tp_dealloc(BPlusTree *self);
-static int BPlusTree_tp_init(BPlusTree *self, PyObject *args, PyObject *kwargs);
-static PyObject *BPlusTree_tp_richcompare(PyObject *o1, PyObject *o2, int op);
-static PyObject *BPlusTree_tp_iter(PyObject *self);
-
-// BEGIN sequence method headers
-Py_ssize_t BPlusTree_sq_length(PyObject *self);
-int BPlusTree_sq_contains(PyObject *self, PyObject *value);
-
-// BEGIN object method headers
-static PyObject *BPlusTree_method_get_b(PyObject *self, PyObject *args);
-static PyObject *BPlusTree_method_add(PyObject *self, PyObject *args);
-static PyObject *BPlusTree_method_get_indices(PyObject *self, PyObject *args);
 
 // define our subslot for BPlusTree sequence methods
 static PySequenceMethods BPlusTree_sq_methods = {
@@ -114,6 +21,7 @@ static PySequenceMethods BPlusTree_sq_methods = {
     0,                                          /*sq_inplace_repeat*/
 };
 
+
 // define our subslot for BPlusTree public methods
 static PyMethodDef BPlusTree_tp_methods[] = { 
     {"get_b", BPlusTree_method_get_b, METH_NOARGS, "Return the maximum child nodes per node in the tree."},
@@ -121,6 +29,7 @@ static PyMethodDef BPlusTree_tp_methods[] = {
     {"get_indices", BPlusTree_method_get_indices, METH_NOARGS, "Traverses the tree and returns a list of lists, where each 2nd level list represents a node, and each item is an index."},
     {NULL, NULL, 0, NULL}
 };
+
 
 // define our BPlusTreeType type object
 static PyTypeObject BPlusTreeType = {
@@ -164,6 +73,7 @@ static PyTypeObject BPlusTreeType = {
     BPlusTree_tp_new,                           /*tp_new*/
 };
 
+
 // BEGIN tp method definitions
 static PyObject *BPlusTree_tp_new(PyTypeObject *subtype, PyObject *args, PyObject *kwargs) {
     BPlusTree *self;
@@ -173,16 +83,19 @@ static PyObject *BPlusTree_tp_new(PyTypeObject *subtype, PyObject *args, PyObjec
     return (PyObject *)self;
 }
 
+
 static void BPlusTree_tp_clear(BPlusTree *self) {
     // TODO
     return;
 }
+
 
 static void BPlusTree_tp_dealloc(BPlusTree *self) {
     BPlusTree_tp_clear(self);
     BPlusNode_dealloc(self->root);
     Py_TYPE(self)->tp_free((PyObject *)self);
 }
+
 
 static int BPlusTree_tp_init(BPlusTree *self, PyObject *args, PyObject *kwargs) {
 
@@ -325,6 +238,7 @@ static int BPlusTree_tp_init(BPlusTree *self, PyObject *args, PyObject *kwargs) 
 
 }
 
+
 static PyObject *BPlusTree_tp_richcompare(PyObject *o1, PyObject *o2, int op) {
     
     int is_bplustree;
@@ -361,6 +275,7 @@ static PyObject *BPlusTree_tp_richcompare(PyObject *o1, PyObject *o2, int op) {
     Py_RETURN_NOTIMPLEMENTED;
 
 }
+
 
 // return a {list_iterator} of the items in the tree
 // There are several reasons for this being implemented this way:
@@ -457,10 +372,15 @@ static PyObject *BPlusTree_tp_iter(PyObject *self) {
 
 }
 
+
+// BEGIN sequence methods
+// this is called on call to len()
 Py_ssize_t BPlusTree_sq_length(PyObject *self) {
     return ((BPlusTree *)self)->size;
 }
 
+
+// this is called on use of the `in` keyword
 int BPlusTree_sq_contains(PyObject *self, PyObject *value) {
 
     BPlusTree *tree = (BPlusTree *)self;
@@ -488,7 +408,7 @@ int BPlusTree_sq_contains(PyObject *self, PyObject *value) {
 }
 
 
-// BEGIN object method definitions
+// BEGIN public method definitions
 static PyObject *BPlusTree_method_get_b(PyObject *self, PyObject *args) {
     return PyLong_FromLong(((BPlusTree *)self)->b);
 }
@@ -807,473 +727,6 @@ int BPlusTree_cmp(BPlusTree *tree1, BPlusTree *tree2) {
     return 1;
 
 }
-
-
-// BEGIN general-use helper function definitions
-
-// sets builtin functions.
-// returns 1 on success, 0 otherwise.
-int setBuiltins() {
-    
-    if (_builtins == NULL) {
-        _builtins = PyEval_GetBuiltins();
-        if (_builtins == NULL) {
-            return 0;
-        }
-        _iter = PyDict_GetItemString(_builtins, "iter");
-        if (_iter == NULL) {
-            return 0;
-        }
-        _next = PyDict_GetItemString(_builtins, "next");
-        if (_next == NULL) {
-            return 0;
-        }
-        _hash = PyDict_GetItemString(_builtins, "hash");
-        if (_hash == NULL) {
-            return 0;
-        }
-        _print = PyDict_GetItemString(_builtins, "print");
-        if (_print == NULL) {
-            return 0;
-        }
-    }
-    
-    return 1;
-
-}
-
-// debugging function for printing reference count.
-void printRefCount(char *label, PyObject *x) {
-
-    PyObject
-        *py_label = PyUnicode_FromString(label),
-        *py_refcnt = PyLong_FromLong(x->ob_refcnt);
-
-    setBuiltins();
-
-    PyObject_CallFunctionObjArgs(
-        _print,
-        py_label,
-        x,
-        py_refcnt,
-        NULL
-    );
-
-    Py_DECREF(py_label);
-    Py_DECREF(py_refcnt);
-
-}
-
-
-// BEGIN Array32 helper method definitions
-
-// basically ripped from the Python bisect module
-// {a} is an array of {l64} assumed to be in sorted order.
-// Returns the leftmost index at which {x} can be inserted while keeping {a} in
-// sorted order.
-int bisect_left(Array32 *a, l64 x) {
-
-    int
-        lo = 0,
-        hi = a->size,
-        mid;
-
-    while (lo < hi) {
-        mid = (lo + hi) / 2;
-        if (((l64 *)a->arr)[mid] < x) {
-            lo = mid + 1;
-        } else {
-            hi = mid;
-        }
-    }
-
-    return lo;
-
-}
-
-// basically ripped from the Python bisect module
-// {a} is an array of {l64} assumed to be in sorted order.
-// Returns the rightmost index at which {x} can be inserted while keeping {a} in
-// sorted order.
-int bisect_right(Array32 *a, l64 x) {
-
-    int
-        lo = 0,
-        hi = a->size,
-        mid;
-
-    while (lo < hi) {
-        mid = (lo + hi) / 2;
-        if (x < ((l64 *)a->arr)[mid]) {
-            hi = mid;
-        } else {
-            lo = mid + 1;
-        }
-    }
-
-    return lo;
-
-}
-
-// convenience method for inserting {x} into an array of {l64} at {index}.
-int insert_l64(Array32 *a, int index, l64 x) {
-    l64 *arr = (l64 *)a->arr;
-    for (int i = a->size - 1; i >= index; i--) {
-        arr[i+1] = arr[i];
-    }
-    arr[index] = x;
-    a->size++;
-
-    return 1;
-}
-
-// convenience method for inserting {x} into an array of {PyObject *} at {index}.
-int insert_PyObject(Array32 *a, int index, PyObject *x) {
-    PyObject **arr = (PyObject **)a->arr;
-    for (int i = a->size - 1; i >= index; i--) {
-        arr[i+1] = arr[i];
-    }
-    arr[index] = x;
-    a->size++;
-    
-    #if DEBUG >= 2
-    printRefCount("insert_PyObject(): x before Py_INCREF:", x);
-    #endif
-
-    Py_INCREF(x);
-
-    #if DEBUG >= 2
-    printRefCount("insert_PyObject(): x after Py_INCREF:", x);
-    #endif
-
-    return 1;
-}
-
-// convenience method for inserting {x} into an array of {BPlusNode *} at {index}.
-int insert_BPlusNode(Array32 *a, int index, BPlusNode *x) {
-    BPlusNode **arr = (BPlusNode **)a->arr;
-    for (int i = a->size - 1; i >= index; i--) {
-        arr[i+1] = arr[i];
-    }
-    arr[index] = x;
-    a->size++;
-
-    return 1;
-}
-
-
-// BEGIN BPlusNode helper function definitions
-
-// basic BPlusNode constructor for common elements
-BPlusNode *BPlusNode_init(int b) {
-    // construct the node
-    BPlusNode *node = (BPlusNode *)malloc(sizeof(BPlusNode));
-
-    // construct the indices
-    node->indices = (Array32 *)malloc(sizeof(Array32));
-    node->indices->size = 0;
-    node->indices->arr = (l64 *)malloc(sizeof(l64) * (b+1));
-
-    // initialize everything else to 0
-    node->values = NULL;
-    node->children = NULL;
-    node->parent = NULL;
-    node->prev = NULL;
-    node->next = NULL;
-
-    return node;
-}
-
-// Leaf Constructor
-// construct a node that will have pointers to PyObjects and no children
-BPlusNode *BPlusLeaf_init(int b) {
-    // construct the node
-    BPlusNode *node = BPlusNode_init(b);
-    node->values = (Array32 *)malloc(sizeof(Array32));
-    node->values->size = 0;
-    node->values->arr = (PyObject **)malloc(sizeof(PyObject *) * (b+1));
-
-    return node;
-}
-
-// Branch Constructor
-// construct a node that will have leaves or other nodes beneath it
-BPlusNode *BPlusBranch_init(int b) {
-    // construct the node
-    BPlusNode *node = BPlusNode_init(b);
-    node->children = (Array32 *)malloc(sizeof(Array32));
-    node->children->size = 0;
-    node->children->arr = (BPlusNode **)malloc(sizeof(BPlusNode *) * (b+1));
-
-    return node;
-}
-
-// deallocate memory for {node} and its members
-void BPlusNode_dealloc(BPlusNode *node) {
-
-    int sz, i;
-    PyObject **values_arr = NULL;
-    BPlusNode **children_arr = NULL;
-
-    if (node->children != NULL) {
-        sz = node->children->size;
-        children_arr = (BPlusNode **)node->children->arr;
-        for (i = 0; i < sz; i++) {
-            BPlusNode_dealloc(children_arr[i]);
-        }
-        free(node->children->arr);
-        free(node->children);
-    }
-
-    if (node->values != NULL) {
-        sz = node->values->size;
-        values_arr = (PyObject **)node->values->arr;
-        for (i = 0; i < sz; i++) {
-            Py_DECREF(values_arr[i]);
-        }
-        free(node->values->arr);
-        free(node->values);
-    }
-    
-    free(node->indices->arr);
-    free(node->indices);
-
-    free(node);
-
-}
-
-// helper function that takes root node {root} and index value {key}, and returns
-// a pointer to the leaf node that either:
-//  1. contains {key}
-//  2. would contain {key} if it existed in the tree
-BPlusNode *BPlusNode_search(BPlusNode *root, l64 key) {
-
-    BPlusNode *current = root;
-    int ix;
-
-    while (current->children != NULL) {
-        ix = bisect_right(current->indices, key);
-        current = ((BPlusNode **)current->children->arr)[ix];
-    }
-
-    return current;
-
-}
-
-// helper function for determining if {leaf} contains the index {key} and
-// PyObject {o} combination.
-// Returns either:
-//  1. If {key}/{o} are not in {leaf}, -1
-//  2. If {key}/{o} are in {leaf}, an integer value {ix} representing the
-//      location of {o}
-//  3. If there is an error, -2
-int BPlusLeaf_search(BPlusNode *leaf, l64 key, PyObject *o) {
-
-    int ix = bisect_left(leaf->indices, key);
-
-    if (ix >= leaf->indices->size) {
-        return -1;
-    }
-
-    if (((l64 *)leaf->indices->arr)[ix] != key) {
-        return -1;
-    }
-
-    PyObject *val_ix = ((PyObject **)leaf->values->arr)[ix];
-
-    if (PyObject_RichCompareBool(o, val_ix, Py_EQ) == 1) {
-        // {o} is already contained in the BPlusTree
-        return 1;
-    }
-
-    // We have a collision!
-    // Current strategy for dealing with this is replace the object at {ix}
-    // with a list, and add all items with the same hash to the list
-    // This works because lists are an unhashable type and therefore cannot
-    // be mistaken for an object intentionally in the tree
-    int res = PyObject_IsInstance(val_ix, (PyObject *)&PyList_Type);
-    PyObject *collision_container;
-
-    if (res == -1) {
-        // error determining if the value at {ix} is a list
-        return -2;
-    } else if (res == 0) {
-        // not a list, therefore not a known collision and {o} is not in the
-        // list
-        return -1;
-    }
-
-    collision_container = val_ix;
-
-    // iterate through the list and check if {o} is contained
-    for (int jx = 0; jx < PyList_Size(collision_container); jx++) {
-        val_ix = PyList_GetItem(collision_container, jx);
-        if (PyObject_RichCompareBool(o, val_ix, Py_EQ) == 1) {
-            return 1;
-        }
-    }
-
-    // {o} is not in the list
-    return 0;
-
-}
-
-// Helper method for inserting {key}/{o} into the leaf.
-// Assumes {leaf} is the proper leaf within the tree to insert {o}.
-// Returns one of the following:
-//  1. If {o} was not already in the tree and the insert operation was
-//      successful, returns 1
-//  2. If {o} was already in the tree, does nothing and returns 0
-//  3. On an error, returns -1
-int BPlusLeaf_insert(BPlusNode *leaf, l64 key, PyObject *o) {
-
-    int ix = bisect_left(leaf->indices, key);
-
-    if (ix >= leaf->indices->size) {
-        #if DEBUG >= 1
-        PyObject *msg0 = PyUnicode_FromString("BPlusLeaf_insert: Appending object in leaf");
-        if (PyObject_CallFunctionObjArgs(_print, msg0, o, NULL) == NULL) {
-            Py_DECREF(msg0);
-            Py_INCREF(PyExc_RuntimeError);
-            PyErr_SetString(PyExc_RuntimeError, "Got error calling print statement.");
-            return -1;
-        }
-        Py_DECREF(msg0);
-        #endif
-        insert_l64(leaf->indices, ix, key);
-        insert_PyObject(leaf->values, ix, o);
-
-        return 1;
-    }
-
-    if (((l64 *)leaf->indices->arr)[ix] != key) {
-        #if DEBUG >= 1
-        PyObject
-            *msg1 = PyUnicode_FromString("BPlusLeaf_insert: inserting object in leaf"),
-            *msg2 = PyUnicode_FromString("at index"),
-            *pyobj_ix = PyLong_FromLong(ix);
-        if (PyObject_CallFunctionObjArgs(_print, msg1, o, msg2, pyobj_ix, NULL) == NULL) {
-            Py_DECREF(msg1);
-            Py_DECREF(msg2);
-            Py_DECREF(pyobj_ix);
-            Py_INCREF(PyExc_RuntimeError);
-            PyErr_SetString(PyExc_RuntimeError, "Got error calling print statement.");
-            return -1;
-        }
-        Py_DECREF(msg1);
-        Py_DECREF(msg2);
-        Py_DECREF(pyobj_ix);
-        #endif
-        insert_l64(leaf->indices, ix, key);
-        insert_PyObject(leaf->values, ix, o);
-
-        return 1;
-    }
-
-    PyObject *val_ix = ((PyObject **)leaf->values->arr)[ix];
-
-    if (PyObject_RichCompareBool(o, val_ix, Py_EQ) == 1) {
-        // {o} is already contained in the BPlusTree
-        #if DEBUG >= 1
-        PyObject
-            *msg4 = PyUnicode_FromString("BPlusLeaf_insert: object already exists in leaf");
-        if (PyObject_CallFunctionObjArgs(_print, msg4, o, NULL) == NULL) {
-            Py_DECREF(msg4);
-            Py_INCREF(PyExc_RuntimeError);
-            PyErr_SetString(PyExc_RuntimeError, "Got error calling print statement.");
-            return -1;
-        }
-        Py_DECREF(msg4);
-        #endif
-        return 0;
-    }
-
-    // We have a collision!
-    // Current strategy for dealing with this is replace the object at {ix}
-    // with a list, and add all items with the same hash to the list
-    // This works because lists are an unhashable type and therefore cannot
-    // be mistaken for an object intentionally in the tree
-    int res = PyObject_IsInstance(val_ix, (PyObject *)&PyList_Type);
-    PyObject *collision_container;
-
-    if (res == -1) {
-        // error
-        Py_INCREF(PyExc_RuntimeError);
-        PyErr_SetString(PyExc_RuntimeError, "Got error checking if existing value is a list.");
-        return -1;
-    } else if (res == 0) {
-        #if DEBUG >= 1
-        PyObject
-            *msg5 = PyUnicode_FromString("BPlusLeaf_insert: got collision: creating new collision container");
-        if (PyObject_CallFunctionObjArgs(_print, msg5, NULL) == NULL) {
-            Py_DECREF(msg5);
-            Py_INCREF(PyExc_RuntimeError);
-            PyErr_SetString(PyExc_RuntimeError, "Got error calling print statement.");
-            return -1;
-        }
-        Py_DECREF(msg5);
-        #endif
-        // not already a list, create one
-        collision_container = PyList_New(1);
-        ((PyObject **)leaf->values->arr)[ix] = collision_container;
-        // SetItem steals a reference, which is acceptable in this case because
-        // we're removing it from the leaf container
-        PyList_SetItem(collision_container, 0, val_ix);
-    } else {
-        #if DEBUG >= 1
-        PyObject
-            *msg6 = PyUnicode_FromString("BPlusLeaf_insert: got collision: already exists a collision container:");
-        if (PyObject_CallFunctionObjArgs(_print, msg6, val_ix, NULL) == NULL) {
-            Py_DECREF(msg6);
-            Py_INCREF(PyExc_RuntimeError);
-            PyErr_SetString(PyExc_RuntimeError, "Got error calling print statement.");
-            return -1;
-        }
-        Py_DECREF(msg6);
-        #endif
-        // there is already a list, check if {o} is contained in it
-        collision_container = val_ix;
-        for (int jx = 0; jx < PyList_Size(collision_container); jx++) {
-            PyObject *subval = PyList_GetItem(collision_container, jx);
-            if (PyObject_RichCompareBool(o, subval, Py_EQ) == 1) {
-                return 0;
-            }
-        }
-    }
-
-    // if we get to this point, it means we have a {collision_container} that
-    // does not currently contain {o}
-
-    // the append operation increases refcount of {o}
-    if (PyList_Append(collision_container, o) == -1) {
-        // append operation failed
-        return -1;
-    }
- 
-    // keep the list in sorted order
-    if (PyList_Sort(collision_container) == -1) {
-        // sort operation failed
-        Py_INCREF(PyExc_RuntimeError);
-        PyErr_SetString(PyExc_RuntimeError, "Got error sorting {collision_container} after attempting to handle a hash collision.");
-        return -1;
-    }
-
-    #if DEBUG >= 1
-    PyObject
-        *msg7 = PyUnicode_FromString("BPlusLeaf_insert: collision container directly before return:");
-    if (PyObject_CallFunctionObjArgs(_print, msg7, collision_container, NULL) == NULL) {
-        Py_DECREF(msg7);
-        Py_INCREF(PyExc_RuntimeError);
-        PyErr_SetString(PyExc_RuntimeError, "Got error calling print statement.");
-        return -1;
-    }
-    Py_DECREF(msg7);
-    #endif
-
-    return 1;
- 
-}
-
 
 // define our module methods
 // currently no module methods

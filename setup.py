@@ -24,7 +24,12 @@ setuptools.setup(
     ext_modules=[
         setuptools.Extension(
             "five_one_one_bplus.c",
-            ["c/bplus.c",],
+            [
+                "c/general.c",
+                "c/array32.c",
+                "c/bplusnode.c",
+                "c/bplustree.c",
+            ],
         ),
     ],
     python_requires=">=3.10",
