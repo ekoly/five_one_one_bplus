@@ -6,6 +6,7 @@ from five_one_one_bplus import BPlusSet
 
 from tests.utils import (
     get_randostrs,
+    parametrized_b,
     parametrized_range,
 )
 
@@ -175,3 +176,29 @@ def test_richcompare_equal_inverse(b1, b2):
     s2 = BPlusSet(initializer2, b=b2)
 
     assert not (s1 != s2)
+
+@parametrized_b
+def test_richcompare_different_type(bplusset_empty):
+    """
+    Tests that B-Plus Trees when compared with a non-B-Plus Tree evaluate to
+    False.
+    """
+    s = bplusset_empty
+
+    assert (s == dict()) is False
+    assert (s == list()) is False
+    assert (s == tuple()) is False
+    assert (s == set()) is False
+
+@parametrized_b
+def test_richcompare_different_type_inverse(bplusset_empty):
+    """
+    Tests that B-Plus Trees when compared with a non-B-Plus Tree evaluate to
+    False.
+    """
+    s = bplusset_empty
+
+    assert (s != dict()) is True
+    assert (s != list()) is True
+    assert (s != tuple()) is True
+    assert (s != set()) is True
