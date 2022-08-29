@@ -327,14 +327,19 @@ static int BPlusTree_tp_init(BPlusTree *self, PyObject *args, PyObject *kwargs) 
 
 static PyObject *BPlusTree_tp_richcompare(PyObject *o1, PyObject *o2, int op) {
     
-    int res;
+    int is_bplustree;
 
-    if ((res = PyObject_IsInstance(o2, (PyObject *)&BPlusTreeType)) == -1) {
+    if ((is_bplustree = PyObject_IsInstance(o2, (PyObject *)&BPlusTreeType)) == -1) {
         // got error calling isinstance
         return NULL;
-    } else if (res == 0) {
-        // {o2} is not a BPlusTree or a subtype of BPlusTree, return False
-        Py_RETURN_FALSE;
+    } else if (is_bplustree == 0) {
+        // {o2} is not a BPlusTree or a subtype of BPlusTree
+        if (op == Py_EQ) {
+            Py_RETURN_FALSE;
+        } else if (op == Py_NE) {
+            Py_RETURN_TRUE;
+        }
+        Py_RETURN_NOTIMPLEMENTED;
     }
 
     // if we get here, {o1} and {o2} are both BPlusTrees or subtypes
